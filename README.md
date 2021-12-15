@@ -1,7 +1,7 @@
 <div align="center">
   <h1><strong>LeftWM</strong></h1>
   <p>
-    <strong>A window manager for adventurers</strong>
+    <strong>A window manager for adventuruuuuers</strong>
   </p>
   <p>
     <a href="https://github.com/leftwm/leftwm/actions?query=workflow%3ACI">
