@@ -124,7 +124,7 @@ impl State {
         self.mousekey = config.mousekey();
         self.max_window_width = config.max_window_width();
         for win in &mut self.windows {
-            win.load_config(config);
+            config.load_window(win);
         }
         for ws in &mut self.workspaces {
             ws.load_config(config);
@@ -182,6 +182,10 @@ impl State {
                 new_window.set_states(old_window.states());
                 ordered.push(new_window.clone());
                 self.windows.remove(index);
+
+                // Make the x server aware of any tag changes for the window.
+                let act = DisplayAction::SetWindowTags(new_window.handle, new_window.tags.clone());
+                self.actions.push_back(act);
             }
         });
         if had_strut {

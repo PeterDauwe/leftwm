@@ -89,6 +89,9 @@ fn from_map_request(raw_event: xlib::XEvent, xw: &mut XWrap) -> Option<DisplayEv
     };
     // Gather info about the window from xlib.
     let name = xw.get_window_name(event.window);
+    let legacy_name = xw.get_window_legacy_name(event.window);
+    let class = xw.get_window_class(event.window);
+    log::info!("WM class: {:?}", class);
     let pid = xw.get_window_pid(event.window);
     let r#type = xw.get_window_type(event.window);
     let states = xw.get_window_states(event.window);
@@ -100,6 +103,8 @@ fn from_map_request(raw_event: xlib::XEvent, xw: &mut XWrap) -> Option<DisplayEv
 
     // Build the new window, and fill in info about it.
     let mut w = Window::new(handle, name, pid);
+    w.wm_class = class;
+    w.legacy_name = legacy_name;
     w.r#type = r#type.clone();
     w.set_states(states);
     if let Some(trans) = trans {
@@ -183,7 +188,7 @@ fn from_enter_notify(xw: &XWrap, raw_event: xlib::XEvent) -> Option<DisplayEvent
         return None;
     }
     let h = WindowHandle::XlibHandle(event.window);
-    Some(DisplayEvent::MouseEnteredWindow(h))
+    Some(DisplayEvent::WindowTakeFocus(h))
 }
 
 fn from_motion_notify(raw_event: xlib::XEvent, xw: &mut XWrap) -> Option<DisplayEvent> {
