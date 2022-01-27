@@ -26,10 +26,11 @@ pub struct State {
     pub active_scratchpads: HashMap<String, Option<u32>>,
     pub actions: VecDeque<DisplayAction>,
     pub tags: Tags, // List of all known tags.
-    pub mousekey: String,
+    pub mousekey: Vec<String>,
     pub max_window_width: Option<Size>,
     pub default_width: i32,
     pub default_height: i32,
+    pub disable_tile_drag: bool,
 }
 
 impl State {
@@ -57,6 +58,7 @@ impl State {
             mousekey: config.mousekey(),
             default_width: config.default_width(),
             default_height: config.default_height(),
+            disable_tile_drag: config.disable_tile_drag(),
         }
     }
 
@@ -132,7 +134,7 @@ impl State {
     }
 
     /// Apply saved state to a running manager.
-    pub fn restore_state(&mut self, state: &State) {
+    pub fn restore_state(&mut self, state: &Self) {
         // Restore tags.
         for old_tag in state.tags.all() {
             if let Some(tag) = self.tags.get_mut(old_tag.id) {
