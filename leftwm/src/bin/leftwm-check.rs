@@ -3,7 +3,10 @@ use clap::{App, Arg};
 use leftwm::{Config, ThemeSetting};
 use std::env;
 use std::fs;
+use std::fs::File;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::path::PathBuf;
 use xdg::BaseDirectories;
 
@@ -79,11 +82,21 @@ pub fn load_from_file(fspath: Option<&str>, verbose: bool) -> Result<Config> {
     if verbose {
         dbg!(&config_filename);
     }
-    let contents = fs::read_to_string(config_filename)?;
-    if verbose {
-        dbg!(&contents);
+    if Path::new(&config_filename).exists() {
+        let contents = fs::read_to_string(config_filename)?;
+        if verbose {
+            dbg!(&contents);
+        }
+
+        let config = toml::from_str(&contents)?;
+        Ok(config)
+    } else {
+        let config = Config::default();
+        let toml = toml::to_string(&config).unwrap();
+        let mut file = File::create(&config_filename)?;
+        file.write_all(toml.as_bytes())?;
+        Ok(config)
     }
-    Ok(toml::from_str(&contents)?)
 }
 
 fn check_elogind(verbose: bool) -> Result<()> {
@@ -161,10 +174,8 @@ fn check_theme_contents(filepaths: Vec<PathBuf>, verbose: bool) -> bool {
     let mut returns = Vec::new();
     let missing_files = missing_expected_file(&filepaths);
 
-    if !missing_files.is_empty() {
-        missing_files
-            .into_iter()
-            .for_each(|file| returns.push(format!("File not found: {}", file)));
+    for missing_file in missing_files {
+        returns.push(format!("File not found: {}", missing_file));
     }
 
     for filepath in filepaths {
@@ -199,11 +210,10 @@ fn check_theme_contents(filepaths: Vec<PathBuf>, verbose: bool) -> bool {
     }
 }
 
-fn missing_expected_file<'a>(filepaths: &[PathBuf]) -> Vec<&'a str> {
-    vec!["up", "down", "theme.toml"]
-        .into_iter()
-        .filter(|f| !filepaths.iter().any(|fp| fp.ends_with(f)))
-        .collect()
+fn missing_expected_file<'a>(filepaths: &'a [PathBuf]) -> impl Iterator<Item = &&'a str> {
+    ["up", "down", "theme.toml"]
+        .iter()
+        .filter(move |f| !filepaths.iter().any(|fp| fp.ends_with(f)))
 }
 
 fn check_current_theme_set(filepath: &Option<PathBuf>, verbose: bool) -> Result<&PathBuf> {
