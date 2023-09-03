@@ -2,7 +2,7 @@ use crate::models::Window;
 use crate::models::Xyhw;
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, Serialize, Deserialize, Clone, Debug, PartialEq, Copy)]
+#[derive(Default, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Copy)]
 pub struct XyhwChange {
     pub x: Option<i32>,
     pub y: Option<i32>,
@@ -104,9 +104,8 @@ impl XyhwChange {
         } else {
             false
         };
-        let mut xyhw = match window.strut {
-            Some(x) => x,
-            None => return false,
+        let Some(mut xyhw) = window.strut else {
+            return false;
         };
         changed = self.update(&mut xyhw) || changed;
         window.strut = Some(xyhw);

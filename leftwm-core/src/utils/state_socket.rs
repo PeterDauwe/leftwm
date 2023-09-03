@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 #[derive(Debug, Default)]
 struct State {
     peers: Vec<Option<UnixStream>>,
-    last_state: String, //last_state: String
+    last_state: String,
 }
 
 #[derive(Debug, Default)]
@@ -61,7 +61,9 @@ impl StateSocket {
             let mut json = serde_json::to_string(&state)?;
             json.push('\n');
             let mut state = self.state.lock().await;
-            if json != state.last_state {
+
+            let state_changed = json != state.last_state;
+            if state_changed {
                 state.peers.retain(std::option::Option::is_some);
                 for peer in &mut state.peers {
                     if peer
@@ -88,6 +90,7 @@ impl StateSocket {
             fs::remove_file(&self.socket_file).await?;
             UnixListener::bind(&self.socket_file)?
         };
+
         Ok(tokio::spawn(async move {
             loop {
                 match listener.accept().await {
@@ -97,7 +100,7 @@ impl StateSocket {
                             state.peers.push(Some(peer));
                         }
                     }
-                    Err(e) => log::error!("accept failed = {:?}", e),
+                    Err(e) => tracing::error!("Accept failed = {:?}", e),
                 }
             }
         }))
@@ -111,12 +114,8 @@ mod test {
     use crate::Manager;
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    #[test]
-    fn multiple_peers() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(multiple_peers_async());
-    }
-    async fn multiple_peers_async() {
+    #[tokio::test]
+    async fn multiple_peers() {
         let manager = Manager::new_test(vec![]);
         let state = &manager.state;
 
@@ -158,12 +157,8 @@ mod test {
         state_socket.shutdown().await;
     }
 
-    #[test]
-    fn get_update() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(get_update_async());
-    }
-    async fn get_update_async() {
+    #[tokio::test]
+    async fn get_update() {
         let manager = Manager::new_test(vec![]);
         let state = &manager.state;
 
@@ -191,12 +186,8 @@ mod test {
         state_socket.shutdown().await;
     }
 
-    #[test]
-    fn socket_cleanup() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(socket_cleanup_async());
-    }
-    async fn socket_cleanup_async() {
+    #[tokio::test]
+    async fn socket_cleanup() {
         let socket_file = temp_path().await.unwrap();
         let mut state_socket = StateSocket::default();
         state_socket.listen(socket_file.clone()).await.unwrap();
@@ -204,12 +195,8 @@ mod test {
         assert!(!socket_file.exists());
     }
 
-    #[test]
-    fn socket_already_bound() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(socket_already_bound_async());
-    }
-    async fn socket_already_bound_async() {
+    #[tokio::test]
+    async fn socket_already_bound() {
         let socket_file = temp_path().await.unwrap();
         let mut old_socket = StateSocket::default();
         old_socket.listen(socket_file.clone()).await.unwrap();

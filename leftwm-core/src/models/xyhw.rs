@@ -1,12 +1,13 @@
 //! Various window and workspace sizing structs.
 #![allow(clippy::module_name_repetitions)]
+use leftwm_layouts::geometry::Rect;
 use serde::{Deserialize, Serialize};
 use std::cmp;
 use std::ops::Add;
 use std::ops::Sub;
 
 /// Struct containing min/max width and height and window placement. x,y from top left.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Copy)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Copy)]
 pub struct Xyhw {
     x: i32,
     y: i32,
@@ -20,7 +21,7 @@ pub struct Xyhw {
 
 /// Modifiable struct that can be used to generate an Xyhw struct. Contains min/max width and
 /// height and window placement. x,y from top left.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Copy)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Copy)]
 pub struct XyhwBuilder {
     pub x: i32,
     pub y: i32,
@@ -108,6 +109,29 @@ impl From<XyhwBuilder> for Xyhw {
         };
         b.update_limits();
         b
+    }
+}
+
+impl From<Rect> for Xyhw {
+    fn from(rect: Rect) -> Self {
+        Self {
+            x: rect.x,
+            y: rect.y,
+            w: rect.w as i32,
+            h: rect.h as i32,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<Xyhw> for Rect {
+    fn from(xyhw: Xyhw) -> Self {
+        Rect {
+            x: xyhw.x,
+            y: xyhw.y,
+            w: xyhw.w.unsigned_abs(),
+            h: xyhw.h.unsigned_abs(),
+        }
     }
 }
 
@@ -226,15 +250,15 @@ impl Xyhw {
     pub const fn without(&self, other: &Self) -> Self {
         let mut without = *self;
         if other.w > other.h {
-            //horizontal trim
+            // horizontal trim
             if other.y > self.y + (self.h / 2) {
-                //bottom check
+                // bottom check
                 let bottom_over = (without.y + without.h) - other.y;
                 if bottom_over > 0 {
                     without.h -= bottom_over;
                 }
             } else {
-                //top check
+                // top check
                 let top_over = (other.y + other.h) - without.y;
                 if top_over > 0 {
                     without.y += top_over;
@@ -242,16 +266,16 @@ impl Xyhw {
                 }
             }
         } else {
-            //vertical trim
+            // vertical trim
             let left_over = (other.x + other.w) - without.x;
             if other.x > self.x + (self.w / 2) {
-                //right check
+                // right check
                 let right_over = (without.x + without.w) - other.x;
                 if right_over > 0 {
                     without.w -= right_over;
                 }
             } else {
-                //left check
+                // left check
                 if left_over > 0 {
                     without.x += left_over;
                     without.w -= left_over;

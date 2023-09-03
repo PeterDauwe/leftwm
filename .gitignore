@@ -4,7 +4,14 @@ leftwm.logs
 .idea/
 
 result
+.nixos-vm/result
+.nixos-vm/leftwm.qcow2
 .direnv
 .envrc
 
 sweep.timestamp
+
+.toggletasks.json
+
+.vscode/
+.fleet/

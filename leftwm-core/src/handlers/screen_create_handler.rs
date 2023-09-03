@@ -3,51 +3,40 @@ use crate::config::Config;
 use crate::display_servers::DisplayServer;
 
 impl<C: Config, SERVER: DisplayServer> Manager<C, SERVER> {
-    /// Process a collection of events, and apply them changes to a manager.
+    /// Process a collection of events, and apply the changes to a manager.
     ///
     /// Returns `true` if changes need to be rendered.
     pub fn screen_create_handler(&mut self, screen: Screen) -> bool {
+        tracing::trace!("Screen create: {:?}", screen);
+
         let tag_index = self.state.workspaces.len();
         let tag_len = self.state.tags.len_normal();
-        let workspace_id = screen.wsid.unwrap_or_else(|| {
-            self.state
-                .workspaces
-                .iter()
-                .map(|ws| ws.id.unwrap_or(-1))
-                .max()
-                .unwrap_or(-1)
-                + 1
-        });
-        let mut new_workspace = Workspace::new(
-            Some(workspace_id),
-            screen.bbox,
-            self.state.layout_manager.new_layout(Some(workspace_id)),
-            screen.max_window_width.or(self.state.max_window_width),
-        );
-        if new_workspace.id.unwrap_or(0) as usize >= tag_len {
-            dbg!("Workspace ID needs to be less than or equal to the number of tags available.");
+
+        // Only used in tests, where there are multiple screens being created by `Screen::default()`
+        // The screen passed to this function should normally already have it's id given in the config serialization.
+        let workspace_id = match screen.id {
+            None => self.state.workspaces.last().map_or(0, |ws| ws.id) + 1,
+            Some(set_id) => set_id,
+        };
+
+        let mut new_workspace = Workspace::new(screen.bbox, workspace_id);
+        if self.state.workspaces.len() >= tag_len {
+            tracing::warn!("The number of workspaces needs to be less than or equal to the number of tags available. No more workspaces will be added.");
         }
         new_workspace.load_config(&self.config);
 
-        //make sure are enough tags for this new screen
+        // Make sure there are enough tags for this new screen.
         let next_id = if tag_len > tag_index {
             tag_index + 1
         } else {
-            // add a new tag for the workspace
-            self.state
-                .tags
-                .add_new_unlabeled(self.state.layout_manager.new_layout(Some(workspace_id)))
+            // Add a new tag for the workspace.
+            self.state.tags.add_new_unlabeled()
         };
-
-        if let Some(tag) = self.state.tags.get_mut(next_id) {
-            tag.layout = new_workspace.layout;
-        }
 
         self.state.focus_workspace(&new_workspace);
         self.state.focus_tag(&next_id);
         new_workspace.show_tag(&next_id);
         self.state.workspaces.push(new_workspace.clone());
-        self.state.workspaces.sort_by(|a, b| a.id.cmp(&b.id));
         self.state.screens.push(screen);
         self.state.focus_workspace(&new_workspace);
         false

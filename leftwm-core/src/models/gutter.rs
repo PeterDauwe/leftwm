@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-type WorkSpaceID = i32;
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub enum Side {
     Top,
@@ -14,13 +12,13 @@ pub enum Side {
 pub struct Gutter {
     pub side: Side,
     pub value: i32,
-    pub wsid: Option<WorkSpaceID>,
+    pub id: Option<usize>,
 }
 
 impl Gutter {
     #[must_use]
-    pub const fn new(side: Side, value: i32, wsid: Option<WorkSpaceID>) -> Self {
-        Self { side, value, wsid }
+    pub const fn new(side: Side, value: i32, id: Option<usize>) -> Self {
+        Self { side, value, id }
     }
 }
 
@@ -29,7 +27,7 @@ impl Default for Gutter {
         Self {
             side: Side::Top,
             value: 0,
-            wsid: None,
+            id: None,
         }
     }
 }

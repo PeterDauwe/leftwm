@@ -1,6 +1,7 @@
-use clap::{value_t, App, Arg};
-use leftwm_core::errors::Result;
+use clap::{arg, command};
+use leftwm_core::errors::{LeftError, Result};
 use leftwm_core::models::dto::{DisplayState, ManagerState};
+use liquid::Template;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::str;
@@ -13,85 +14,30 @@ type Partials = liquid::partials::EagerCompiler<liquid::partials::InMemorySource
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let matches = App::new("LeftWM State")
-        .author("Lex Childs <lex.childs@gmail.com>")
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("prints out the current state of LeftWM")
-        .arg(
-            Arg::with_name("template")
-                .short("t")
-                .long("template")
-                .value_name("FILE")
-                .help("A liquid template to use for the output")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("string")
-                .short("s")
-                .long("string")
-                .value_name("STRING")
-                .help("Use a liquid template string literal to use for the output")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("workspace")
-                .short("w")
-                .long("workspace")
-                .value_name("WS_NUM")
-                .help("render only info about a given workspace [0..]")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("newline")
-                .short("n")
-                .long("newline")
-                .help("Print new lines in the output"),
-        )
-        .arg(
-            Arg::with_name("quit")
-                .short("q")
-                .long("quit")
-                .help("Prints the state once and quits"),
-        )
-        .get_matches();
+    let matches = get_command().get_matches();
 
-    let template_file = matches.value_of("template");
-
-    let string_literal = matches.value_of("string");
-
-    let ws_num: Option<usize> = match value_t!(matches, "workspace", usize) {
-        Ok(x) => Some(x),
-        Err(_) => None,
-    };
+    let template_file = matches.get_one::<String>("template");
+    let string_literal = matches.get_one::<String>("string");
+    let ws_id = matches.get_one("workspace").copied();
+    let newline = matches.get_flag("newline");
+    let once = matches.get_flag("quit");
 
     let mut stream_reader = stream_reader().await?;
-    let once = matches.occurrences_of("quit") == 1;
-    let newline = matches.occurrences_of("newline") == 1;
-
     if let Some(template_file) = template_file {
         let path = Path::new(template_file);
         let partials = get_partials(path.parent()).await?;
         let template_str = fs::read_to_string(template_file).await?;
-        let template = liquid::ParserBuilder::with_stdlib()
-            .partials(partials)
-            .build()
-            .expect("Unable to build template")
-            .parse(&template_str)
-            .expect("Unable to parse template");
+        let template = get_parsed_template(&template_str, Some(partials))?;
         while let Some(line) = stream_reader.next_line().await? {
-            let _droppable = template_handler(&template, newline, ws_num, &line);
+            let _droppable = template_handler(&template, newline, ws_id, &line);
             if once {
                 break;
             }
         }
     } else if let Some(string_literal) = string_literal {
-        let template = liquid::ParserBuilder::with_stdlib()
-            .build()
-            .expect("Unable to build template")
-            .parse(string_literal)
-            .expect("Unable to parse template");
+        let template = get_parsed_template(string_literal, None)?;
         while let Some(line) = stream_reader.next_line().await? {
-            let _droppable = template_handler(&template, newline, ws_num, &line);
+            let _droppable = template_handler(&template, newline, ws_id, &line);
             if once {
                 break;
             }
@@ -106,6 +52,28 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Given some string literal and optional partials, calculate the template and return a useful
+/// error
+fn get_parsed_template(string_literal: &str, partials: Option<Partials>) -> Result<Template> {
+    let mut parser = liquid::ParserBuilder::with_stdlib();
+    if let Some(partials) = partials {
+        parser = parser.partials(partials);
+    }
+
+    match parser
+        .build()
+        .expect("Unable to build template")
+        .parse(string_literal)
+    {
+        Ok(template) => Ok(template),
+        Err(err) => {
+            eprintln!("{err}");
+
+            Err(LeftError::LiquidParsingError)
+        }
+    }
 }
 
 async fn get_partials(dir: Option<&Path>) -> Result<Partials> {
@@ -148,21 +116,21 @@ fn raw_handler(line: &str) -> Result<()> {
     let s: ManagerState = serde_json::from_str(line)?;
     let display: DisplayState = s.into();
     let json = serde_json::to_string(&display)?;
-    println!("{}", json);
+    println!("{json}");
     Ok(())
 }
 
 fn template_handler(
     template: &liquid::Template,
     newline: bool,
-    ws_num: Option<usize>,
+    ws_id: Option<usize>,
     line: &str,
 ) -> Result<()> {
     let s: ManagerState = serde_json::from_str(line)?;
     let display: DisplayState = s.into();
 
-    let globals = if let Some(ws_num) = ws_num {
-        let json = serde_json::to_string(&display.workspaces[ws_num])?;
+    let globals = if let Some(ws_id) = ws_id {
+        let json = serde_json::to_string(&display.workspaces[ws_id])?;
         let workspace: liquid::model::Object = serde_json::from_str(&json)?;
         let mut globals = liquid::model::Object::new();
         globals.insert(
@@ -170,12 +138,6 @@ fn template_handler(
             liquid::model::Value::scalar(display.window_title),
         );
         globals.insert("workspace".into(), liquid::model::Value::Object(workspace));
-        //liquid only does time in utc. BUG: https://github.com/cobalt-org/liquid-rust/issues/332
-        //as a workaround we are setting a time locally
-        globals.insert(
-            "localtime".into(),
-            liquid::model::Value::scalar(get_localtime()),
-        );
         globals
     } else {
         let json = serde_json::to_string(&display)?;
@@ -189,17 +151,12 @@ fn template_handler(
     // but note the difference between print! and println!. Trying to skip println!
     // will result in theme degradation, as in #263.
     if newline {
-        print!("{}", output);
+        print!("{output}");
     } else {
         output = str::replace(&output, "\n", "");
-        println!("{}", output);
+        println!("{output}");
     }
     Ok(())
-}
-
-fn get_localtime() -> String {
-    let now = chrono::Local::now();
-    now.format("%m/%d/%Y %l:%M %p").to_string()
 }
 
 async fn stream_reader() -> Result<Lines<BufReader<UnixStream>>> {
@@ -207,6 +164,20 @@ async fn stream_reader() -> Result<Lines<BufReader<UnixStream>>> {
     let socket_file = base.place_runtime_file("current_state.sock")?;
     let stream = UnixStream::connect(socket_file).await?;
     Ok(BufReader::new(stream).lines())
+}
+
+fn get_command() -> clap::Command {
+    command!("LeftWM State")
+        .about("Prints out the current state of LeftWM")
+        .help_template(leftwm::utils::get_help_template())
+        .args(&[
+            arg!(-t --template [FILE] "A liquid template to use for the output"),
+            arg!(-s --string [STRING] "Use a liquid template string literal to use for the output"),
+            arg!(-w --workspace [WS_NUM] "render only info about a given workspace [0..]")
+                .value_parser(clap::value_parser!(usize)),
+            arg!(-n --newline "Print new lines in the output"),
+            arg!(-q --quit "Prints the state once and quits"),
+        ])
 }
 
 #[cfg(test)]
@@ -218,7 +189,7 @@ mod tests {
         let file_names = vec![
             "main.liquid",
             "_partial.liquid",
-            "߀nonascii-in-filename.liquid", // first char U07C0
+            "\u{7c0}nonascii-in-filename.liquid", // first char U07C0
             "1_partial.liquid",
             "_liquid.txt",
         ];
@@ -228,6 +199,6 @@ mod tests {
             .filter(|f_n| is_partial_filename(f_n))
             .collect::<Vec<&OsStr>>();
 
-        assert!(partials == vec![OsStr::new("_partial.liquid")])
+        assert!(partials == vec![OsStr::new("_partial.liquid")]);
     }
 }

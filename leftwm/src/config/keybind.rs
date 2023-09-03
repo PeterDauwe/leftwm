@@ -1,11 +1,18 @@
+#[cfg(feature = "lefthk")]
 use super::BaseCommand;
+#[cfg(feature = "lefthk")]
 use crate::Config;
+#[cfg(feature = "lefthk")]
 use anyhow::{ensure, Context, Result};
-use leftwm_core::layouts::Layout;
+#[cfg(feature = "lefthk")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "lefthk")]
+use std::fmt::Write;
+#[cfg(feature = "lefthk")]
 use std::str::FromStr;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg(feature = "lefthk")]
 pub struct Keybind {
     pub command: BaseCommand,
     #[serde(default)]
@@ -14,90 +21,90 @@ pub struct Keybind {
     pub key: String,
 }
 
-macro_rules! ensure_non_empty {
-    ($value:expr) => {{
-        ensure!(!$value.is_empty(), "value must not be empty");
-        $value
-    }};
-}
-
+#[cfg(feature = "lefthk")]
 impl Keybind {
-    pub fn try_convert_to_core_keybind(&self, config: &Config) -> Result<leftwm_core::Keybind> {
-        let command = match &self.command {
-            BaseCommand::Execute => {
-                leftwm_core::Command::Execute(ensure_non_empty!(self.value.clone()))
+    pub fn try_convert_to_lefthk_keybind(
+        &self,
+        config: &Config,
+    ) -> Result<lefthk_core::config::Keybind> {
+        let value_is_some = !self.value.is_empty();
+        match &self.command {
+            BaseCommand::Execute | BaseCommand::LoadTheme => {
+                ensure!(value_is_some, "value must not be empty");
             }
-            BaseCommand::CloseWindow => leftwm_core::Command::CloseWindow,
-            BaseCommand::SwapTags => leftwm_core::Command::SwapScreens,
-            BaseCommand::SoftReload => leftwm_core::Command::SoftReload,
-            BaseCommand::HardReload => leftwm_core::Command::HardReload,
-            BaseCommand::ToggleScratchPad => {
-                leftwm_core::Command::ToggleScratchPad(ensure_non_empty!(self.value.clone()))
+            BaseCommand::ToggleScratchPad
+            | BaseCommand::AttachScratchPad
+            | BaseCommand::NextScratchPadWindow
+            | BaseCommand::PrevScratchPadWindow => {
+                ensure!(
+                    is_valid_scratchpad_name(config, self.value.as_str()),
+                    "Value should be a correct scratchpad name"
+                );
             }
-            BaseCommand::ToggleFullScreen => leftwm_core::Command::ToggleFullScreen,
-            BaseCommand::ToggleSticky => leftwm_core::Command::ToggleSticky,
-            BaseCommand::GotoTag => leftwm_core::Command::GoToTag {
-                tag: usize::from_str(&self.value).context("invalid index value for GotoTag")?,
-                swap: !config.disable_current_tag_swap,
-            },
-            BaseCommand::FloatingToTile => leftwm_core::Command::FloatingToTile,
-            BaseCommand::TileToFloating => leftwm_core::Command::TileToFloating,
-            BaseCommand::ToggleFloating => leftwm_core::Command::ToggleFloating,
-            BaseCommand::MoveWindowUp => leftwm_core::Command::MoveWindowUp,
-            BaseCommand::MoveWindowDown => leftwm_core::Command::MoveWindowDown,
-            BaseCommand::MoveWindowTop => leftwm_core::Command::MoveWindowTop,
-            BaseCommand::FocusNextTag => leftwm_core::Command::FocusNextTag,
-            BaseCommand::FocusPreviousTag => leftwm_core::Command::FocusPreviousTag,
-            BaseCommand::FocusWindowUp => leftwm_core::Command::FocusWindowUp,
-            BaseCommand::FocusWindowDown => leftwm_core::Command::FocusWindowDown,
-            BaseCommand::FocusWindowTop => {
-                leftwm_core::Command::FocusWindowTop(if self.value.is_empty() {
-                    false
-                } else {
-                    bool::from_str(&self.value)
-                        .context("invalid boolean value for FocusWindowTop")?
-                })
+            BaseCommand::ReleaseScratchPad => {
+                ensure!(
+                    self.value.is_empty()
+                        || usize::from_str(&self.value).is_ok()
+                        || is_valid_scratchpad_name(config, self.value.as_str()),
+                    "Value should be empty, a window number or a valid scratchpad name"
+                );
             }
-            BaseCommand::FocusWorkspaceNext => leftwm_core::Command::FocusWorkspaceNext,
-            BaseCommand::FocusWorkspacePrevious => leftwm_core::Command::FocusWorkspacePrevious,
-            BaseCommand::MoveToTag => leftwm_core::Command::SendWindowToTag {
-                window: None,
-                tag: usize::from_str(&self.value)
-                    .context("invalid index value for SendWindowToTag")?,
-            },
-            BaseCommand::MoveToLastWorkspace => leftwm_core::Command::MoveWindowToLastWorkspace,
-            BaseCommand::MoveWindowToNextWorkspace => {
-                leftwm_core::Command::MoveWindowToNextWorkspace
+            BaseCommand::GotoTag => {
+                usize::from_str(&self.value).context("invalid index value for GotoTag")?;
             }
-            BaseCommand::MoveWindowToPreviousWorkspace => {
-                leftwm_core::Command::MoveWindowToPreviousWorkspace
+            BaseCommand::FocusWindowTop if value_is_some => {
+                bool::from_str(&self.value).context("invalid boolean value for FocusWindowTop")?;
             }
-            BaseCommand::MouseMoveWindow => leftwm_core::Command::MouseMoveWindow,
-            BaseCommand::NextLayout => leftwm_core::Command::NextLayout,
-            BaseCommand::PreviousLayout => leftwm_core::Command::PreviousLayout,
-            BaseCommand::SetLayout => leftwm_core::Command::SetLayout(
-                Layout::from_str(&self.value)
-                    .context("could not parse layout for command SetLayout")?,
-            ),
-            BaseCommand::RotateTag => leftwm_core::Command::RotateTag,
-            BaseCommand::IncreaseMainWidth => leftwm_core::Command::IncreaseMainWidth(
-                i8::from_str(&self.value).context("invalid width value for IncreaseMainWidth")?,
-            ),
-            BaseCommand::DecreaseMainWidth => leftwm_core::Command::DecreaseMainWidth(
-                i8::from_str(&self.value).context("invalid width value for DecreaseMainWidth")?,
-            ),
-            BaseCommand::SetMarginMultiplier => leftwm_core::Command::SetMarginMultiplier(
+            BaseCommand::SwapWindowTop if value_is_some => {
+                bool::from_str(&self.value).context("invalid boolean value for SwapWindowTop")?;
+            }
+            BaseCommand::MoveToTag => {
+                usize::from_str(&self.value).context("invalid index value for SendWindowToTag")?;
+            }
+            BaseCommand::SetLayout => {
+                ensure!(
+                    config.layouts.contains(&self.value),
+                    "could not parse layout for command SetLayout"
+                );
+            }
+            BaseCommand::IncreaseMainWidth => {
+                i8::from_str(&self.value).context("invalid width value for IncreaseMainWidth")?;
+            }
+            BaseCommand::DecreaseMainWidth => {
+                i8::from_str(&self.value).context("invalid width value for DecreaseMainWidth")?;
+            }
+            BaseCommand::SetMarginMultiplier => {
                 f32::from_str(&self.value)
-                    .context("invalid margin multiplier for SetMarginMultiplier")?,
-            ),
-            BaseCommand::UnloadTheme => leftwm_core::Command::Other("UnloadTheme".into()),
-            BaseCommand::LoadTheme => {
-                leftwm_core::Command::Other(format!("LoadTheme {}", ensure_non_empty!(&self.value)))
+                    .context("invalid margin multiplier for SetMarginMultiplier")?;
             }
-        };
+            BaseCommand::FocusNextTag | BaseCommand::FocusPreviousTag if value_is_some => {
+                ensure!(
+                usize::from_str(&self.value).is_ok()
+                || matches!(&self.value.as_str(), &""|&"goto_empty"|&"ignore_empty"|&"goto_used"|&"ignore_used"|&"default"),
+            "Value should be empty, or one of 'default', 'goto_empty', 'ignore_empty', 'goto_used', 'ignore_used'"
+                );
+            }
+            _ => {}
+        }
 
-        Ok(leftwm_core::Keybind {
-            command,
+        let command: String = if self.command == BaseCommand::Execute {
+            self.value.clone()
+        } else {
+            let mut head = "leftwm-command ".to_owned();
+            let mut command_parts: String = self.command.into();
+            if !self.value.is_empty() {
+                let args = if self.command == BaseCommand::GotoTag {
+                    format!(" {} {}", self.value, !config.disable_current_tag_swap)
+                } else {
+                    format!(" {}", self.value)
+                };
+                command_parts.push_str(&args);
+            }
+            _ = writeln!(head, "'{command_parts}'");
+            head
+        };
+        Ok(lefthk_core::config::Keybind {
+            command: lefthk_core::config::Command::Execute(command),
             modifier: self
                 .modifier
                 .as_ref()
@@ -162,7 +169,7 @@ impl std::convert::From<&str> for Modifier {
 impl std::fmt::Display for Modifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Single(modifier) => write!(f, "{}", modifier),
+            Self::Single(modifier) => write!(f, "{modifier}"),
             Self::List(modifiers) => write!(f, "{}", modifiers.join("+")),
         }
     }
@@ -175,4 +182,13 @@ impl Modifier {
             Self::List(modifiers) => modifiers.sort_unstable(),
         }
     }
+}
+
+#[cfg(feature = "lefthk")]
+fn is_valid_scratchpad_name(config: &Config, scratchpad_name: &str) -> bool {
+    config
+        .scratchpad
+        .as_ref()
+        .and_then(|scratchpads| scratchpads.iter().find(|s| s.name == scratchpad_name))
+        .is_some()
 }

@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 
 use super::MaybeWindowHandle;
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusBehaviour {
     Sloppy,
     ClickTo,
@@ -19,6 +19,20 @@ impl Default for FocusBehaviour {
     }
 }
 
+impl FocusBehaviour {
+    pub fn is_sloppy(self) -> bool {
+        self == FocusBehaviour::Sloppy
+    }
+
+    pub fn is_clickto(self) -> bool {
+        self == FocusBehaviour::ClickTo
+    }
+
+    pub fn is_driven(self) -> bool {
+        self == FocusBehaviour::Driven
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FocusManager {
     pub behaviour: FocusBehaviour,
@@ -27,6 +41,8 @@ pub struct FocusManager {
     pub window_history: VecDeque<MaybeWindowHandle>,
     pub tag_history: VecDeque<TagId>,
     pub tags_last_window: HashMap<TagId, WindowHandle>,
+    pub sloppy_mouse_follows_focus: bool,
+    pub last_mouse_position: Option<(i32, i32)>,
 }
 
 impl FocusManager {
@@ -38,6 +54,8 @@ impl FocusManager {
             window_history: Default::default(),
             tag_history: Default::default(),
             tags_last_window: Default::default(),
+            sloppy_mouse_follows_focus: config.sloppy_mouse_follows_focus(),
+            last_mouse_position: None,
         }
     }
 
@@ -54,7 +72,7 @@ impl FocusManager {
     /// Return the currently focused workspace.
     pub fn workspace_mut<'a, 'b>(
         &self,
-        workspaces: &'a mut Vec<Workspace>,
+        workspaces: &'a mut [Workspace],
     ) -> Option<&'b mut Workspace>
     where
         'a: 'b,
@@ -83,7 +101,7 @@ impl FocusManager {
     }
 
     /// Return the currently focused window.
-    pub fn window_mut<'a, 'b>(&self, windows: &'a mut Vec<Window>) -> Option<&'b mut Window>
+    pub fn window_mut<'a, 'b>(&self, windows: &'a mut [Window]) -> Option<&'b mut Window>
     where
         'a: 'b,
     {

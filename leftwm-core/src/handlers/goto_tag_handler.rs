@@ -1,32 +1,30 @@
 use crate::{models::TagId, state::State};
 
 impl State {
-    pub fn goto_tag_handler(&mut self, tag_num: TagId) -> Option<bool> {
-        if tag_num > self.tags.len_normal() || tag_num < 1 {
+    pub fn goto_tag_handler(&mut self, tag_id: TagId) -> Option<bool> {
+        if tag_id > self.tags.len_normal() || tag_id < 1 {
             return Some(false);
         }
 
-        //let tag_id = self.tags[tag_num - 1].label.clone();
-        let new_tags = vec![tag_num];
+        let new_tag = Some(tag_id);
         // No focus safety check.
-        let old_tags = self.focus_manager.workspace(&self.workspaces)?.tags.clone();
+        let old_tag = self.focus_manager.workspace(&self.workspaces)?.tag?;
         if let Some(handle) = self.focus_manager.window(&self.windows).map(|w| w.handle) {
             let old_handle = self
                 .focus_manager
                 .tags_last_window
-                .entry(old_tags[0])
+                .entry(old_tag)
                 .or_insert(handle);
             *old_handle = handle;
         }
-        if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.tags == new_tags) {
-            ws.tags = old_tags;
+        if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.tag == new_tag) {
+            ws.tag = Some(old_tag);
         }
 
-        self.focus_manager.workspace_mut(&mut self.workspaces)?.tags = new_tags;
-        self.focus_tag(&tag_num);
+        self.focus_manager.workspace_mut(&mut self.workspaces)?.tag = new_tag;
+        self.focus_tag(&tag_id);
         self.update_static();
-        self.layout_manager
-            .update_layouts(&mut self.workspaces, self.tags.all_mut());
+
         Some(true)
     }
 }
@@ -42,7 +40,7 @@ mod tests {
         manager.screen_create_handler(Screen::default());
         manager.screen_create_handler(Screen::default());
         manager.state.goto_tag_handler(1);
-        assert_eq!(manager.state.workspaces[0].tags, [2]);
-        assert_eq!(manager.state.workspaces[1].tags, [1]);
+        assert_eq!(manager.state.workspaces[0].tag, Some(2));
+        assert_eq!(manager.state.workspaces[1].tag, Some(1));
     }
 }

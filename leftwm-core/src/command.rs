@@ -1,51 +1,93 @@
-use crate::{
-    layouts::Layout,
-    models::{TagId, WindowHandle},
-};
+pub use crate::handlers::command_handler::ReleaseScratchPadOption;
+use crate::models::{ScratchPadName, TagId, WindowHandle};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum Command {
-    Execute(String),
     CloseWindow,
     SwapScreens,
     SoftReload,
     HardReload,
-    ToggleScratchPad(String),
+    AttachScratchPad {
+        window: Option<WindowHandle>,
+        scratchpad: ScratchPadName,
+    },
+    ReleaseScratchPad {
+        window: ReleaseScratchPadOption,
+        tag: Option<TagId>,
+    },
+    PrevScratchPadWindow {
+        scratchpad: ScratchPadName,
+    },
+    NextScratchPadWindow {
+        scratchpad: ScratchPadName,
+    },
+    ToggleScratchPad(ScratchPadName),
     ToggleFullScreen,
+    ToggleMaximized,
     ToggleSticky,
     GoToTag {
         tag: TagId,
         swap: bool,
     },
+    ReturnToLastTag,
     FloatingToTile,
     TileToFloating,
     ToggleFloating,
     MoveWindowUp,
     MoveWindowDown,
-    MoveWindowTop,
-    FocusNextTag,
-    FocusPreviousTag,
+    MoveWindowTop {
+        swap: bool,
+    },
+    SwapWindowTop {
+        swap: bool,
+    },
+    FocusNextTag {
+        behavior: FocusDeltaBehavior,
+    },
+    FocusPreviousTag {
+        behavior: FocusDeltaBehavior,
+    },
+    FocusWindow(String),
     FocusWindowUp,
     FocusWindowDown,
-    FocusWindowTop(bool),
+    FocusWindowTop {
+        swap: bool,
+    },
     FocusWorkspaceNext,
     FocusWorkspacePrevious,
     SendWindowToTag {
         window: Option<WindowHandle>,
         tag: TagId,
     },
+    MoveWindowToNextTag {
+        follow: bool,
+    },
+    MoveWindowToPreviousTag {
+        follow: bool,
+    },
     MoveWindowToLastWorkspace,
     MoveWindowToNextWorkspace,
     MoveWindowToPreviousWorkspace,
-    MouseMoveWindow,
     NextLayout,
     PreviousLayout,
-    SetLayout(Layout),
+    SetLayout(String),
     RotateTag,
-    IncreaseMainWidth(i8),
-    DecreaseMainWidth(i8),
+    IncreaseMainWidth(i32), // deprecated: use IncreaseMainSize instead
+    DecreaseMainWidth(i32), // deprecated: use DecreaseMainSize instead
+    IncreaseMainSize(i32),
+    DecreaseMainSize(i32),
+    IncreaseMainCount(),
+    DecreaseMainCount(),
     SetMarginMultiplier(f32),
     SendWorkspaceToTag(usize, usize),
+    CloseAllOtherWindows,
     Other(String),
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
+pub enum FocusDeltaBehavior {
+    Default,
+    IgnoreUsed,
+    IgnoreEmpty,
 }

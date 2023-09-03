@@ -1,14 +1,20 @@
 //! Starts programs in autostart, runs global 'up' script, and boots theme. Provides function to
 //! boot other desktop files also.
 use crate::errors::Result;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::iter::{Extend, FromIterator};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{atomic::AtomicBool, Arc};
+use tracing::error;
 use xdg::BaseDirectories;
+
+pub type ChildID = u32;
 
 #[derive(Default)]
 pub struct Nanny {}
@@ -63,17 +69,12 @@ impl Nanny {
     }
 
     /// Runs a script if it exits
-    fn run_script(path: &Path) -> Result<Option<Child>> {
-        if path.is_file() {
-            Command::new(&path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .spawn()
-                .map(Some)
-                .map_err(Into::into)
-        } else {
-            Ok(None)
-        }
+    fn run_script(path: &Path) -> Result<Child> {
+        Command::new(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()
+            .map_err(Into::into)
     }
 
     /// Runs the 'up' script in the config directory, if there is one.
@@ -82,10 +83,44 @@ impl Nanny {
     ///
     /// Will error if unable to open current config directory.
     /// Could be caused by inadequate permissions.
-    pub fn run_global_up_script() -> Result<Option<Child>> {
+    pub fn run_global_up_script() -> Result<Child> {
         let mut path = Self::get_config_dir()?;
+        let mut scripts = Self::get_files_in_path_with_ext(&path, "up")?;
+
+        while let Some(Reverse(script)) = scripts.pop() {
+            if let Err(e) = Self::run_script(&script) {
+                tracing::error!("Unable to run script {script:?}, error: {e}");
+            }
+        }
+
         path.push("up");
         Self::run_script(&path)
+    }
+
+    /// Returns a min-heap of files with the specified extension.
+    ///
+    /// # Errors
+    ///
+    /// Comes from `std::fs::read_dir()`.
+    fn get_files_in_path_with_ext(
+        path: impl AsRef<Path>,
+        ext: impl AsRef<OsStr>,
+    ) -> Result<BinaryHeap<Reverse<PathBuf>>> {
+        let dir = fs::read_dir(&path)?;
+
+        let mut files = BinaryHeap::new();
+
+        for entry in dir.flatten() {
+            let file = entry.path();
+
+            if let Some(extension) = file.extension() {
+                if extension == ext.as_ref() {
+                    files.push(Reverse(file));
+                }
+            }
+        }
+
+        Ok(files)
     }
 
     /// Runs the 'up' script of the current theme, if there is one.
@@ -94,7 +129,7 @@ impl Nanny {
     ///
     /// Will error if unable to open current theme directory.
     /// Could be caused by inadequate permissions.
-    pub fn boot_current_theme() -> Result<Option<Child>> {
+    pub fn boot_current_theme() -> Result<Child> {
         let mut path = Self::get_config_dir()?;
         path.push("themes");
         path.push("current");
@@ -141,9 +176,12 @@ fn boot_desktop_file(path: &Path) -> std::result::Result<Child, EntryBootError> 
         return Err(EntryBootError::Hidden);
     }
 
-    if entry.exec.is_none() {
+    let Some(exec) = entry.exec else {
         return Err(EntryBootError::NoExec);
-    }
+    };
+
+    let exec = remove_field_codes(&exec);
+
     let wd = entry
         .path
         .unwrap_or_else(|| dirs_next::home_dir().unwrap_or_else(|| PathBuf::from(".")));
@@ -151,9 +189,46 @@ fn boot_desktop_file(path: &Path) -> std::result::Result<Child, EntryBootError> 
     Command::new("sh")
         .current_dir(wd)
         .arg("-c")
-        .arg(entry.exec.unwrap())
+        .arg(exec)
         .spawn()
         .map_err(EntryBootError::Execute)
+}
+
+/// Removes [field codes](https://specifications.freedesktop.org/desktop-entry-spec/desktop-entry-spec-latest.html#exec-variables) from exec string
+///
+/// When encountering % at the end of the string or followed by non-alphabetic and non-% character
+/// the function leaves it unmodified in order to be more resilient.
+/// According to the spec, the input should be unquoted first (but this is not implemented currently).
+fn remove_field_codes(exec: &str) -> String {
+    let mut result = String::new();
+    let mut iter = exec.chars();
+    while let Some(ch) = iter.next() {
+        if ch == '%' {
+            let next = iter.next();
+            match next {
+                Some(next) if next.is_ascii_alphabetic() => {
+                    // field codes '%[a-zA-Z]' should be removed
+                    continue;
+                }
+                Some(next) if next == '%' => {
+                    // '%%' is escaped '%'
+                    result.push('%');
+                }
+                Some(next) => {
+                    // it is illegal for '%' to be followed by neither another '%' nor alphabetic charecters, but we leave it unmodified
+                    result.push('%');
+                    result.push(next);
+                }
+                None => {
+                    // it is illegal for '%' to be at the end of the string, but we leave it unmodified
+                    result.push('%');
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 /// Refer to [Recognized desktop entry keys](https://specifications.freedesktop.org/desktop-entry-spec/latest/ar01s06.html)
@@ -209,7 +284,7 @@ impl DesktopEntry {
     }
 
     fn split_line(line: &str) -> Option<(&str, &str)> {
-        line.find('=')?; //Check we have an equals, if we don't return None
+        line.find('=')?; // Check we have an equals, if we don't return None
         line.split_once('=')
     }
     fn split_to_set(value: &str) -> HashSet<String> {
@@ -230,13 +305,9 @@ impl DesktopEntry {
 }
 
 /// A struct managing children processes.
-///
-/// The `reap` method could be called at any place the user wants to.
-/// `register_child_hook` provides a hook that sets a flag. User may use the
-/// flag to do a epoch-based reaping.
 #[derive(Debug, Default)]
 pub struct Children {
-    inner: HashMap<u32, Child>,
+    inner: HashMap<ChildID, Child>,
 }
 
 impl Children {
@@ -250,23 +321,24 @@ impl Children {
     }
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.inner.len() == 0
+        self.inner.is_empty()
     }
     /// Insert a `Child` in the `Children`.
-    /// If this `Children` did not have this value present, true is returned.
-    /// If this `Children` did have this value present, false is returned.
+    ///
+    /// # Returns
+    /// - `true` if `child` is a new child-process
+    /// - `false` if `child` is already known
     pub fn insert(&mut self, child: Child) -> bool {
-        // Not possible to have duplication!
         self.inner.insert(child.id(), child).is_none()
     }
+
     /// Merge another `Children` into this `Children`.
     pub fn merge(&mut self, reaper: Self) {
-        self.inner.extend(reaper.inner.into_iter());
+        self.inner.extend(reaper.inner);
     }
-    /// Try reaping all the children processes managed by this struct.
-    pub fn reap(&mut self) {
-        // The `try_wait` needs `child` to be `mut`, but only `HashMap::retain`
-        // allows modifying the value. Here `id` is not needed.
+
+    /// Remove all children precosses which finished
+    pub fn remove_finished_children(&mut self) {
         self.inner
             .retain(|_, child| child.try_wait().map_or(true, |ret| ret.is_none()));
     }
@@ -275,10 +347,7 @@ impl Children {
 impl FromIterator<Child> for Children {
     fn from_iter<T: IntoIterator<Item = Child>>(iter: T) -> Self {
         Self {
-            inner: iter
-                .into_iter()
-                .map(|child| (child.id(), child))
-                .collect::<HashMap<_, _>>(),
+            inner: iter.into_iter().map(|child| (child.id(), child)).collect(),
         }
     }
 }
@@ -293,16 +362,16 @@ impl Extend<Child> for Children {
 /// Register the `SIGCHLD` signal handler. Once the signal is received,
 /// the flag will be set true. User needs to manually clear the flag.
 pub fn register_child_hook(flag: Arc<AtomicBool>) {
-    let _ = signal_hook::flag::register(signal_hook::consts::signal::SIGCHLD, flag)
-        .map_err(|err| log::error!("Cannot register SIGCHLD signal handler: {:?}", err));
+    _ = signal_hook::flag::register(signal_hook::consts::signal::SIGCHLD, flag)
+        .map_err(|err| tracing::error!("Cannot register SIGCHLD signal handler: {:?}", err));
 }
 
 /// Sends command to shell for execution
 /// Assumes STDIN/STDOUT unwanted.
-pub fn exec_shell(command: &str, children: &mut Children) -> Option<u32> {
+pub fn exec_shell(command: &str, children: &mut Children) -> Option<ChildID> {
     let child = Command::new("sh")
         .arg("-c")
-        .arg(&command)
+        .arg(command)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .spawn()
@@ -315,11 +384,13 @@ pub fn exec_shell(command: &str, children: &mut Children) -> Option<u32> {
 #[cfg(test)]
 mod tests {
 
+    use crate::child_process::remove_field_codes;
+
     use super::DesktopEntry;
 
     #[test]
     fn test_parse() {
-        let content = r###"
+        let content = r"
             [Desktop Action Gallery]
         Exec=fooview --gallery
         Name=Browse Gallery
@@ -346,7 +417,7 @@ mod tests {
         Exec=fooview --create-new
         Name=Create a new Foo!
         Icon=fooview-new
-                "###;
+                ";
 
         let entry = DesktopEntry::parse(content);
 
@@ -368,5 +439,38 @@ mod tests {
             "expect only show in not contains empty-str"
         );
         assert!(entry.not_show_in.is_none(), "expect not_show_in none");
+    }
+
+    #[test]
+    fn test_field_codes_removal() {
+        let sample_exec_with_field_code = "/path/to/app %u";
+        assert_eq!(
+            remove_field_codes(sample_exec_with_field_code),
+            "/path/to/app "
+        );
+
+        let sample_exec_with_multiple_field_codes = "/path/to/app %a %b";
+        assert_eq!(
+            remove_field_codes(sample_exec_with_multiple_field_codes),
+            "/path/to/app  "
+        );
+
+        let sample_exec_with_escaped_percentage_signs = "/path/to/app %%%%";
+        assert_eq!(
+            remove_field_codes(sample_exec_with_escaped_percentage_signs),
+            "/path/to/app %%"
+        );
+
+        let sample_exec_with_field_code_and_escaped_percentage_signs = "/path/to/app %%%%%u";
+        assert_eq!(
+            remove_field_codes(sample_exec_with_field_code_and_escaped_percentage_signs),
+            "/path/to/app %%"
+        );
+
+        let bad_exec1 = "/path/to/app %^";
+        assert_eq!(remove_field_codes(bad_exec1), bad_exec1);
+
+        let bad_exec2 = "/path/to/app %";
+        assert_eq!(remove_field_codes(bad_exec2), bad_exec2);
     }
 }
